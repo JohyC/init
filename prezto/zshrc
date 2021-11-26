@@ -1,0 +1,100 @@
+#
+# Executes commands at the start of an interactive session.
+#
+# Authors:
+#   mritd <mritd@linux.com>
+#
+
+# Source Prezto.
+if [[ -s "${ZDOTDIR:-$HOME}/.zprezto/init.zsh" ]]; then
+    source "${ZDOTDIR:-$HOME}/.zprezto/init.zsh"
+fi
+
+# Customize to your needs...
+
+# pretty diff(need to install diff-so-fancy)
+# brew install diff-so-fancy ORRRR npm i -g diff-so-fancy
+function dff(){
+    diff -u $@ | diff-so-fancy | less --tabs=4 -RFX
+}
+
+# for history-substring-search module, this configuration may no longer be needed in the future
+export HISTORY_SUBSTRING_SEARCH_PREFIXED=true
+export HISTORY_SUBSTRING_SEARCH_ENSURE_UNIQUE=true
+
+# Common Env
+export EDITOR='vim'
+export VISUAL='vim'
+
+# Use default grep colors
+export GREP_COLOR='01;31'
+export GREP_COLORS='mt=01;31'
+
+# For macOS
+if [[ "$OSTYPE" =~ ^darwin ]]; then
+    # env
+    export DEV_TOOLS="${HOME}/devtools"
+
+    # GNU tools
+    # brew install coreutils findutils gnu-tar gnu-sed gawk gnutls gnu-indent gnu-getopt grep
+    #
+    #export PATH="/usr/local/opt/coreutils/libexec/gnubin:${PATH}"
+    export PATH="/usr/local/opt/findutils/libexec/gnubin:${PATH}"
+    export PATH="/usr/local/opt/gnu-tar/libexec/gnubin:${PATH}"
+    export PATH="/usr/local/opt/gnu-sed/libexec/gnubin:${PATH}"
+    export PATH="/usr/local/opt/gnu-indent/libexec/gnubin:${PATH}"
+    export PATH="/usr/local/opt/gnu-getopt/bin:${PATH}"
+    export PATH="/usr/local/opt/grep/libexec/gnubin:${PATH}"
+
+    # curl
+    # brew install curl
+    export PATH="/usr/local/opt/curl/bin:${PATH}"
+    
+    # mysql
+    export PATH="/usr/local/opt/mysql-client/bin:${PATH}"
+
+    # alias
+    alias tmux='tmux attach-session -d'
+fi
+
+# For Linux
+if [[ "$OSTYPE" =~ ^linux ]]; then
+    # env
+    export DEV_TOOLS="/opt/devtools"
+fi
+
+# User Secret 
+# Define the secret configuration in this file, prezto automatically loads it
+test -e "${HOME}/.user.secret" && source "${HOME}/.user.secret"
+
+# Golang
+export GOPATH="${HOME}/gopath"
+export GOROOT="${DEV_TOOLS}/go"
+export PATH="${GOROOT}/bin:${GOPATH}/bin:${PATH}"
+
+# TinyGo
+export TINYGO_HOME="${DEV_TOOLS}/tinygo"
+export PATH="${TINYGO_HOME}/bin:${PATH}"
+
+# Rust
+export PATH="${HOME}/.cargo/bin:${PATH}"
+
+# Java
+export JAVA_HOME="${DEV_TOOLS}/openjdk11"
+export PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Maven
+export M2_HOME="${DEV_TOOLS}/maven"
+export PATH="${M2_HOME}/bin:${PATH}"
+
+# Nodejs
+export NODE_HOME="${DEV_TOOLS}/nodejs"
+export PATH="${NODE_HOME}/bin:${PATH}"
+
+# Sonar
+export SONAR_SCANNER="${DEV_TOOLS}/sonar-scanner"
+export PATH="${SONAR_SCANNER}/bin:${PATH}"
+
+# Common alias
+alias kuebctl='kubectl' # Ok, my stupid finger...
+alias dc='docker compose'
