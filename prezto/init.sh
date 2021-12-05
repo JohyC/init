@@ -6,6 +6,7 @@ BACKUP_TIMESTAMP=$(date "+%Y%m%d%H%M%S")
 PREZTO_REPO='https://github.com/sorin-ionescu/prezto.git'
 ZPREZTORC_URL='https://www.suni.cf:3000/Johy/init/raw/branch/master/prezto/zpreztorc'
 ZSHRC_URL='https://www.suni.cf:3000/Johy/init/raw/branch/master/prezto/zshrc'
+ZSHENV_URL='https://www.suni.cf:3000/Johy/init/raw/branch/master/prezto/.zshenv'
 
 COMPLETION_PRLCTL='https://raw.githubusercontent.com/zchee/zsh-completions/main/src/zsh/_prlctl'
 COMPLETION_PRLSRVCTL='https://raw.githubusercontent.com/zchee/zsh-completions/main/src/zsh/_prlsrvctl'
@@ -25,7 +26,7 @@ function change_default_shell(){
 function install_prezto(){
     info "install prezto..."
     if [ ! -f "$HOME/.zshenv" ]; then
-        cp .zshenv $HOME
+	    curl ${ZSHENV_URL} > $HOME/.zshenv
     fi
     source $HOME/.zshenv
     zdot_home="${ZDOTDIR:-$HOME}/.zprezto"
