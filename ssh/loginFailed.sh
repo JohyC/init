@@ -8,7 +8,7 @@ empty: show loginFailed ip;
 workdir=$(cd $(dirname $0); pwd)
 max=${2:-100}
 addDeny() {
-    lastb | awk '{print $3}' | sort | uniq -c | sort -n | awk '$1 > '$max'' | awk '{print $2}' >> /etc/hosts.deny
+    lastb | awk '{print $3}' | sort | uniq -c | sort -n | awk '$1 > '$max'' | awk '{print "sshd:"$2}' >> /etc/hosts.deny
     awk '!a[$0]++' /etc/hosts.deny >| /tmp/hosts.deny && cat /tmp/hosts.deny >| /etc/hosts.deny
 }
 backupLastb() {
