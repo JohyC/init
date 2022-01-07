@@ -30,7 +30,7 @@ empty: show loginFailed ip;
 '
 
 max=${2:-100}
-addDeny=$(lastb | awk '{print $3}' | sort | uniq -c | sort -n | awk '$1 > '$max'' | awk '{print $2}' >> /etc/hosts.deny)
+addDeny=$(lastb | awk '{print $3}' | sort | uniq -c | sort -n | awk '$1 > '$max'' | awk '{print "sshd:"$2}' >> /etc/hosts.deny)
 
 TEMP=`getopt -o ha --long help,add -- "$@"`
 # [ $? != 0 ] $? 代表上次命令是否执行成功；成功为 0 否为不为0；
