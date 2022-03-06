@@ -9,7 +9,8 @@ curl https://www.skydreve.cf:3000/Johy/init/raw/branch/master/prezto/init.sh | b
 **ssh相关**
 
 ```
-禁止ssh登录失败 $2 or max 次ip登录；
+禁止登录失败ip继续登录
+提供 tcp_wrappers iptables两种方式
 ```
 
 **vim配置**
