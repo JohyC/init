@@ -3,7 +3,7 @@
 **zsh prezto 初始化脚本**
 
 ```
-curl https://www.skydreve.cf:3000/Johy/init/raw/branch/master/prezto/init.sh | bash
+curl https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/init.sh | bash
 ```
 
 **ssh相关**
