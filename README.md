@@ -3,6 +3,7 @@
 **zsh prezto 初始化脚本**
 
 ```
+apt install zsh git -y
 curl https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/init.sh | bash
 ```
 
