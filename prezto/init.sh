@@ -3,13 +3,16 @@
 set -e
 
 BACKUP_TIMESTAMP=$(date "+%Y%m%d%H%M%S")
-PREZTO_REPO='https://github.com/sorin-ionescu/prezto.git'
+PREZTO_REPO='https://www.foul.trade:3000/Storage/prezto.git'
 ZPREZTORC_URL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/zpreztorc'
 ZSHRC_URL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/zshrc'
 ZSHENV_URL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/.zshenv'
+CUSTOMZPROFILE_URL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/custom/.zprofile'
+CUSTOMZSHENV_URL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/custom/.zshenv'
+CUSTOMZSHRC_URL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/custom/.zshrc'
 
-COMPLETION_PRLCTL='https://raw.githubusercontent.com/zchee/zsh-completions/main/src/zsh/_prlctl'
-COMPLETION_PRLSRVCTL='https://raw.githubusercontent.com/zchee/zsh-completions/main/src/zsh/_prlsrvctl'
+COMPLETION_PRLCTL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/_prlctl'
+COMPLETION_PRLSRVCTL='https://www.foul.trade:3000/Johy/init/raw/branch/master/prezto/_prlsrvctl'
 
 function pre_check(){
     if ! command -v zsh >/dev/null 2>&1; then
@@ -51,10 +54,14 @@ function install_prezto(){
 
 function install_cutom_config(){
     info "install cutom config..."
+    mkdir $ZDOTDIR/.custom
     curl -sSL ${ZPREZTORC_URL} > "${ZDOTDIR:-$HOME}/.zpreztorc"
     curl -sSL ${ZSHRC_URL} > "${ZDOTDIR:-$HOME}/.zshrc"
     curl -sSL ${COMPLETION_PRLCTL} > "${ZDOTDIR:-$HOME}/.zprezto/modules/completion/external/src/_prlctl"
     curl -sSL ${COMPLETION_PRLSRVCTL} > "${ZDOTDIR:-$HOME}/.zprezto/modules/completion/external/src/_prlsrvctl"
+    curl -sSl ${CUSTOMZPROFILE_URL} > "$ZDOTDIR/.custom/.zprofile"
+    curl -sSl ${CUSTOMZSHENV_URL} > "$ZDOTDIR/.custom/.zshenv"
+    curl -sSl ${CUSTOMZSHRC_URL} > "$ZDOTDIR/.custom/.zshrc"
 }
 
 function info(){
