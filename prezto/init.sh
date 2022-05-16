@@ -62,6 +62,7 @@ function install_cutom_config(){
     curl -sSl ${CUSTOMZPROFILE_URL} > "$ZDOTDIR/.custom/.zprofile"
     curl -sSl ${CUSTOMZSHENV_URL} > "$ZDOTDIR/.custom/.zshenv"
     curl -sSl ${CUSTOMZSHRC_URL} > "$ZDOTDIR/.custom/.zshrc"
+    echo "\nsource $ZDOTDIR/.zshenv\nsource $ZDOTDIR/.custom/.zshenv" >> $HOME/.zshenv
 }
 
 function info(){
