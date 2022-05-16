@@ -25,7 +25,7 @@ export PATH=$PATH:/usr/local/custom/gowork/bin' >>$ZDOTDIR/.custom/.zprofile
   echo -e '
 GOCACHE=/usr/local/custom/gowork/.cache/go-build
 GOPATH=/usr/local/custom/gowork
-GOPROXY=https://goproxy.io,direct' >$custom/go/.config/env
+GOPROXY=https://proxy.golang.com.cn,direct' >$custom/go/.config/env
   source ~/.zshenv
 else
   echo -e 'export GOENV=/usr/local/custom/go/.config/env
@@ -34,6 +34,6 @@ export PATH=$PATH:/usr/local/custom/gowork/bin'
   echo -e '
 GOCACHE=/usr/local/custom/gowork/.cache/go-build
 GOPATH=/usr/local/custom/gowork
-GOPROXY=https://goproxy.io,direct'
+GOPROXY=https://proxy.golang.com.cn,direct'
   echo 'please wirte GOCACHE GOPATH GOPROXY in your env'
 fi
