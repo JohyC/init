@@ -28,9 +28,7 @@ function change_default_shell(){
 
 function install_prezto(){
     info "install prezto..."
-    if [ ! -f "$HOME/.zshenv" ]; then
-	    curl ${ZSHENV_URL} > $HOME/.zshenv
-    fi
+    curl ${ZSHENV_URL} > $HOME/.zshenv
     source $HOME/.zshenv
     zdot_home="${ZDOTDIR:-$HOME}/.zprezto"
     if [[ -d "${zdot_home}" ]]; then
