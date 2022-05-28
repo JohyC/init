@@ -64,13 +64,15 @@
    ```
 
    - `sh deny.sh && iptables-save >| ~/deny.fw`
+   - `sh deny6.sh && ip6tables-save >| ~/deny6.fw`
    - /etc/network/if-up.d 文件夹中创建 `iptables-restore` 文件输入以下内容，并给予执行权限；
 
    ```shell
    #!/bin/sh
-   iptables-restore < ~/deny.fw
+   iptables-restore < /root/wapper/ssh/deny.fw
+   ip6tables-restore < /root/wapper/ssh/deny6.fw
    exit 0
    ```
-
+   
    - `reboot` 
 
