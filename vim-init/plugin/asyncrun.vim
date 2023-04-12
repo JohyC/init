@@ -1,9 +1,9 @@
 " asyncrun.vim - Run shell commands in background and output to quickfix
 "
-" Maintainer: skywind3000 (at) gmail.com, 2016, 2017, 2018, 2019, 2020
-" Homepage: http://www.vim.org/scripts/script.php?script_id=5431
+" Maintainer: skywind3000 (at) gmail.com, 2016-2022
+" Homepage: https://github.com/skywind3000/asyncrun.vim
 "
-" Last Modified: 2021/03/29 08:58
+" Last Modified: 2022/11/29 05:24
 "
 " Run shell command in background and output to quickfix:
 "     :AsyncRun[!] [options] {cmd} ...
@@ -130,6 +130,13 @@ let g:asyncrun_stop = get(g:, 'asyncrun_stop', '')
 " specify how to run your command
 let g:asyncrun_mode = get(g:, 'asyncrun_mode', 0)
 
+" Use quickfix-ID to allow concurrent use of quickfix list and not
+" interleave streamed output of a running command with output from
+" other plugins
+if !exists('g:asyncrun_qfid')
+	let g:asyncrun_qfid = has('patch-8.0.1023') || has('nvim-0.6.1')
+endif
+
 " command hook
 let g:asyncrun_hook = get(g:, 'asyncrun_hook', '')
 
@@ -137,7 +144,7 @@ let g:asyncrun_hook = get(g:, 'asyncrun_hook', '')
 let g:asyncrun_last = get(g:, 'asyncrun_last', 0)
 
 " speed for each timer
-let g:asyncrun_timer = get(g:, 'asyncrun_timer', 25)
+let g:asyncrun_timer = get(g:, 'asyncrun_timer', 100)
 
 " previous exit code
 let g:asyncrun_code = get(g:, 'asyncrun_code', '')
@@ -172,6 +179,9 @@ let g:asyncrun_runner = get(g:, 'asyncrun_runner', {})
 " command modifier for '-program=xxx'
 let g:asyncrun_program = get(g:, 'asyncrun_program', {})
 
+" command translator for '-program=xxx'
+let g:asyncrun_translator = get(g:, 'asyncrun_translator', {})
+
 " silent the autocmds ?
 let g:asyncrun_silent = get(g:, 'asyncrun_silent', 1)
 
@@ -195,6 +205,9 @@ let g:asyncrun_script = get(g:, 'asyncrun_script', '')
 " strict to execute vim script
 let g:asyncrun_strict = get(g:, 'asyncrun_strict', 0)
 
+" events
+let g:asyncrun_event = get(g:, 'asyncrun_event', {})
+
 " terminal job name
 let g:asyncrun_name = ''
 
@@ -217,14 +230,21 @@ function! s:NotSupport()
 	call s:ErrorMsg(msg)
 endfunc
 
+" doautocmd
+function! s:DoAutoCmd(text)
+	let cmd = (g:asyncrun_silent)? 'silent doautocmd' : 'doautocmd'
+	if v:version >= 704
+		let cmd = cmd . ' <nomodeline>'
+	endif
+	if has('autocmd')
+		exec cmd . ' ' . a:text
+	endif
+endfunc
+
 " run autocmd
 function! s:AutoCmd(name)
 	if has('autocmd') && ((g:asyncrun_skip / 2) % 2) == 0
-		if g:asyncrun_silent
-			exec 'silent doautocmd User AsyncRun'.a:name
-		else
-			exec 'doautocmd User AsyncRun'.a:name
-		endif
+		call s:DoAutoCmd('User AsyncRun' . a:name)
 	endif
 endfunc
 
@@ -235,7 +255,7 @@ function! s:chdir(path)
 	else
 		let cmd = haslocaldir()? ((haslocaldir() == 1)? 'lcd' : 'tcd') : 'cd'
 	endif
-	silent execute cmd . ' '. fnameescape(a:path)
+	silent! noautocmd execute cmd . ' '. fnameescape(a:path)
 endfunc
 
 " safe shell escape for neovim
@@ -301,12 +321,15 @@ if has('nvim')
 	endif
 endif
 
+" check qfid
+let s:has_qfid = has('patch-8.0.1023') || has('nvim-0.6.1')
+
 
 "----------------------------------------------------------------------
 "- build in background
 "----------------------------------------------------------------------
 let s:async_nvim = has('nvim')? 1 : 0
-let s:async_info = { 'text':"", 'post':'', 'postsave':'' }
+let s:async_info = { 'text':"", 'post':'', 'postsave':'', 'qfid':-1 }
 let s:async_output = {}
 let s:async_head = 0
 let s:async_tail = 0
@@ -333,6 +356,48 @@ if s:async_nvim == 0 && v:version >= 800
 	let s:async_congest = 0
 endif
 
+" append to quickfix
+function! s:AppendText(textlist, raw)
+	let qfid = s:async_info.qfid
+	if qfid < 0
+		if a:raw == 0
+			if and(g:asyncrun_skip, 1) == 0
+				caddexpr a:textlist
+			else
+				noautocmd caddexpr a:textlist
+			endif
+		else
+			let items = []
+			for text in a:textlist
+				let items += [{'text': text}]
+			endfor
+			if and(g:asyncrun_skip, 1) == 0
+				call setqflist(items, 'a')
+			else
+				noautocmd call setqflist(items, 'a')
+			endif
+			unlet items
+		endif
+	else
+		let info = {'id': qfid}
+		if a:raw == 0
+			let info.lines = a:textlist
+		else
+			let items = []
+			for text in a:textlist
+				let items += [{'text': text}]
+			endfor
+			let info.items = items
+		endif
+		if and(g:asyncrun_skip, 1) == 0
+			call setqflist([], 'a', info)
+		else
+			noautocmd call setqflist([], 'a', info)
+		endif
+		unlet info
+	endif
+endfunc
+
 " quickfix window cursor check
 function! s:AsyncRun_Job_Cursor()
 	if &buftype == 'quickfix'
@@ -344,11 +409,7 @@ endfunc
 
 " find quickfix window and scroll to the bottom then return last window
 function! s:AsyncRun_Job_AutoScroll()
-	if s:async_quick == 0
-		if &buftype == 'quickfix'
-			silent exec 'normal! G'
-		endif
-	else
+	if s:async_quick != 0
 		cbottom
 	endif
 endfunc
@@ -383,46 +444,56 @@ function! s:AsyncRun_Job_CheckScroll()
 endfunc
 
 " invoked on timer or finished
-function! s:AsyncRun_Job_Update(count)
-	let l:iconv = (g:asyncrun_encs != "")? 1 : 0
+function! s:AsyncRun_Job_Update(count, ...)
+	let encoding = s:async_info.encoding
+	let encoding = (encoding != '')? encoding : (g:asyncrun_encs)
+	let l:iconv = (encoding != "")? 1 : 0
 	let l:count = 0
 	let l:total = 0
-	let l:empty = [{'text':''}]
 	let l:check = s:AsyncRun_Job_CheckScroll()
 	let l:efm1 = &g:efm
 	let l:efm2 = &l:efm
-	if g:asyncrun_encs == &encoding
+	let once = (a:0 < 1)? get(g:, 'asyncrun_once', 0) : (a:1)
+	if encoding == &encoding
 		let l:iconv = 0
 	endif
 	if g:asyncrun_local != 0
 		let &l:efm = s:async_info.errorformat
 		let &g:efm = s:async_info.errorformat
 	endif
+	let pathfix = get(g:, 'asyncrun_pathfix', 0)
+	if pathfix != 0
+		let l:previous_cwd = getcwd()
+		silent! call s:chdir(s:async_info.cwd)
+	endif
 	let l:raw = (&efm == '')? 1 : 0
 	if s:async_info.raw == 1
 		let l:raw = 1
+	endif
+	if once != 0
+		let array = []
 	endif
 	while s:async_tail < s:async_head
 		let l:text = s:async_output[s:async_tail]
 		if l:iconv != 0
 			try
-				let l:text = iconv(l:text, g:asyncrun_encs, &encoding)
+				let l:text = iconv(l:text, encoding, &encoding)
 			catch /.*/
 			endtry
 		endif
 		let l:text = substitute(l:text, '\r$', '', 'g')
-		if l:text != ''
-			if l:raw == 0
-				if and(g:asyncrun_skip, 1) == 0
-					caddexpr l:text
-				else
-					noautocmd caddexpr l:text
-				endif
-			else
-				call setqflist([{'text':l:text}], 'a')
+		if once == 0
+			if l:text != ''
+				call s:AppendText([l:text], l:raw)
+			elseif g:asyncrun_trim == 0
+				call s:AppendText([''], l:raw)
 			endif
-		elseif g:asyncrun_trim == 0
-			call setqflist(l:empty, 'a')
+		else
+			if l:text != ''
+				let array += [l:text]
+			elseif g:asyncrun_trim == 0
+				let array += [l:text]
+			endif
 		endif
 		let l:total += 1
 		unlet s:async_output[s:async_tail]
@@ -432,6 +503,13 @@ function! s:AsyncRun_Job_Update(count)
 			break
 		endif
 	endwhile
+	if once != 0
+		call s:AppendText(array, l:raw)
+		unlet array
+	endif
+	if pathfix != 0
+		silent! call s:chdir(l:previous_cwd)
+	endif
 	if g:asyncrun_local != 0
 		if l:efm1 != &g:efm | let &g:efm = l:efm1 | endif
 		if l:efm2 != &l:efm | let &l:efm = l:efm2 | endif
@@ -453,17 +531,9 @@ function! s:AsyncRun_Job_AutoCmd(mode, auto)
 		return 0
 	endif
 	if a:mode == 0
-		if g:asyncrun_silent
-			silent exec 'doautocmd QuickFixCmdPre '. name
-		else
-			exec 'doautocmd QuickFixCmdPre '. name
-		endif
+		call s:DoAutoCmd('QuickFixCmdPre ' . name)
 	else
-		if g:asyncrun_silent
-			silent exec 'doautocmd QuickFixCmdPost '. name
-		else
-			exec 'doautocmd QuickFixCmdPost '. name
-		endif
+		call s:DoAutoCmd('QuickFixCmdPost ' . name)
 	endif
 endfunc
 
@@ -479,8 +549,13 @@ function! g:AsyncRun_Job_OnTimer(id)
 			call job_status(s:async_job)
 		endif
 	endif
-	call s:AsyncRun_Job_Update(limit)
+	if s:async_info.once == 0
+		call s:AsyncRun_Job_Update(limit)
+	endif
 	if and(s:async_state, 7) == 7
+		if s:async_info.once != 0
+			call s:AsyncRun_Job_Update(-1, 1)
+		endif
 		if s:async_head == s:async_tail
 			call s:AsyncRun_Job_OnFinish()
 		endif
@@ -498,7 +573,9 @@ function! s:AsyncRun_Job_OnCallback(channel, text)
 	let s:async_output[s:async_head] = a:text
 	let s:async_head += 1
 	if s:async_congest != 0
-		call s:AsyncRun_Job_Update(-1)
+		if s:async_info.once == 0
+			call s:AsyncRun_Job_Update(-1)
+		endif
 	endif
 endfunc
 
@@ -516,20 +593,20 @@ function! s:AsyncRun_Job_OnFinish()
 		call timer_stop(s:async_timer)
 		unlet s:async_timer
 	endif
-	call s:AsyncRun_Job_Update(-1)
+	call s:AsyncRun_Job_Update(-1, s:async_info.once)
 	let l:current = localtime()
 	let l:last = l:current - s:async_start
 	let l:check = s:AsyncRun_Job_CheckScroll()
 	if s:async_code == 0
 		let l:text = "[Finished in ".l:last." seconds]"
 		if !s:async_info.strip
-			call setqflist([{'text':l:text}], 'a')
+			call s:AppendText([l:text], 1)
 		endif
 		let g:asyncrun_status = "success"
 	else
 		let l:text = 'with code '.s:async_code
 		let l:text = "[Finished in ".l:last." seconds ".l:text."]"
-		call setqflist([{'text':l:text}], 'a')
+		call s:AppendText([l:text], 1)
 		let g:asyncrun_status = "failure"
 	endif
 	let s:async_state = 0
@@ -706,6 +783,7 @@ function! s:AsyncRun_Job_Start(cmd)
 	let s:async_info.auto = s:async_info.autosave
 	let s:async_info.postsave = ''
 	let s:async_info.autosave = ''
+	let s:async_info.qfid = -1
 	let g:asyncrun_text = s:async_info.text
 	call s:AutoCmd('Pre')
 	if s:async_nvim == 0
@@ -713,6 +791,9 @@ function! s:AsyncRun_Job_Start(cmd)
 		let l:options['callback'] = function('s:AsyncRun_Job_OnCallback')
 		let l:options['close_cb'] = function('s:AsyncRun_Job_OnClose')
 		let l:options['exit_cb'] = function('s:AsyncRun_Job_OnExit')
+		if v:version < 800
+			let l:options['exit_cb'] = "<SID>AsyncRun_Job_OnExit"
+		endif
 		let l:options['out_io'] = 'pipe'
 		let l:options['err_io'] = 'out'
 		let l:options['in_io'] = 'null'
@@ -745,6 +826,11 @@ function! s:AsyncRun_Job_Start(cmd)
 		let l:callbacks['on_exit'] = function('s:AsyncRun_Job_NeoVim')
 		let s:neovim_stdout = ''
 		let s:neovim_stderr = ''
+		if s:async_info.range <= 0 
+			if g:asyncrun_stdin == 0 && has('nvim-0.6.0')
+				let l:callbacks.stdin = 'null'
+			endif
+		endif
 		let s:async_job = jobstart(l:args, l:callbacks)
 		let l:success = (s:async_job > 0)? 1 : 0
 		if l:success != 0
@@ -759,9 +845,9 @@ function! s:AsyncRun_Job_Start(cmd)
 				endif
 			endif
 			if exists('*chanclose')
-				call chanclose(s:async_job, 'stdin')
+				silent! call chanclose(s:async_job, 'stdin')
 			elseif exists('*jobclose')
-				call jobclose(s:async_job, 'stdin')
+				silent! call jobclose(s:async_job, 'stdin')
 			endif
 		endif
 	endif
@@ -771,6 +857,19 @@ function! s:AsyncRun_Job_Start(cmd)
 		let s:async_start = localtime()
 		let l:arguments = "[".l:name."]"
 		let l:title = ':AsyncRun '.l:name
+		if exists('g:asyncrun_show_time')
+			let t = g:asyncrun_show_time
+			let format = ''
+			if type(t) == type('')
+				let format = t
+			elseif type(t) == type(0)
+				let format = (t != 0)? '%Y/%m/%d %H:%M:%S' : ''
+			endif
+			if format != ''
+				let t = strftime(format, s:async_start)
+				let l:arguments .= ' (' . t . ')'
+			endif
+		endif
 		if !s:async_info.append
 			if s:async_nvim == 0
 				if v:version >= 800 || has('patch-7.4.2210')
@@ -782,8 +881,11 @@ function! s:AsyncRun_Job_Start(cmd)
 				call setqflist([], ' ', l:title)
 			endif
 		endif
+		if g:asyncrun_qfid && s:has_qfid
+			let s:async_info.qfid = getqflist({'id':0}).id
+		endif
 		if !s:async_info.strip
-			call setqflist([{'text':l:arguments}], 'a')
+			call s:AppendText([l:arguments], 1)
 		endif
 		let l:name = 'g:AsyncRun_Job_OnTimer'
 		let s:async_timer = timer_start(100, l:name, {'repeat':-1})
@@ -868,14 +970,14 @@ endfunc
 
 " extract options from command
 function! s:ExtractOpt(command)
-	let cmd = a:command
+	let cmd = substitute(a:command, '^\s*\(.\{-}\)\s*$', '\1', '')
 	let opts = {}
 	while cmd =~# '^-\%(\w\+\)\%([= ]\|$\)'
 		let opt = matchstr(cmd, '^-\zs\w\+')
 		if cmd =~ '^-\w\+='
 			let val = matchstr(cmd, '^-\w\+=\zs\%(\\.\|\S\)*')
 		else
-			let val = (opt == 'cwd')? '' : 1
+			let val = (opt == 'cwd' || opt == 'encoding')? '' : 1
 		endif
 		let opts[opt] = substitute(val, '\\\(\s\)', '\1', 'g')
 		let cmd = substitute(cmd, '^-\w\+\%(=\%(\\.\|\S\)*\)\=\s*', '', '')
@@ -968,8 +1070,16 @@ function! asyncrun#fullname(f)
 	endif
 	if f == '%'
 		let f = expand('%')
-		if &bt == 'terminal' || &bt == 'nofile'
+		if &bt == 'terminal'
 			let f = ''
+		elseif &bt == 'nofile'
+			let is_directory = 0
+			if f =~ '[\/\\]$'
+				if f =~ '^[\/\\]' || f =~ '^.:[\/\\]'
+					let is_directory = isdirectory(f)
+				endif
+			endif
+			let f = (is_directory)? f : ''
 		endif
 	elseif f =~ '^\~[\/\\]'
 		let f = expand(f)
@@ -1119,18 +1229,36 @@ function! asyncrun#path_win2unix(winpath, prefix)
 	endif
 endfunc
 
+" translate makeprg/grepprg format
+function! asyncrun#translate(program, command)
+	let l:program = a:program
+	let l:command = a:command
+	if l:program =~# '\$\*'
+		let l:command = s:StringReplace(l:program, '\$\*', l:command)
+	elseif l:command != ''
+		let l:command = l:program . ' ' . l:command
+	else
+		let l:command = l:program
+	endif
+	let l:command = s:StringStrip(l:command)
+	let s:async_program_cmd = ''
+	silent exec 'AsyncRun -program=<parse> @ '. l:command
+	let l:command = s:async_program_cmd
+	return l:command
+endfunc
+
 
 "----------------------------------------------------------------------
 " init terminal in current window
 "----------------------------------------------------------------------
 function! s:terminal_init(opts)
 	let command = a:opts.cmd
-	let hidden = get(a:opts, 'hidden', 0)
 	let shell = (has('nvim') == 0)? 1 : 0
 	let pos = get(a:opts, 'pos', 'bottom')
 	let pos = (pos == 'background')? 'hide' : pos
 	let cwd = get(a:opts, 'cwd', '')
 	let cwd = (cwd != '' && isdirectory(cwd))? cwd : ''
+	let bid = -1
 	if get(a:opts, 'safe', get(g:, 'asyncrun_term_safe', 0)) != 0
 		let command = s:ScriptWrite(command, 0)
 		if stridx(command, ' ') >= 0
@@ -1162,12 +1290,15 @@ function! s:terminal_init(opts)
 			let opts.exit_cb = function('s:terminal_exit')
 			let close = get(a:opts, 'close', 0)
 			if close
-				let opts.term_finish = 'close'
+				" let opts.term_finish = 'close'
 			endif
 			if has('patch-8.1.0230')
 				if cwd != ''
 					let opts.cwd = cwd
 				endif
+			endif
+			if has('patch-8.1.1630')
+				let opts.term_name = s:term_gen_name(1, a:opts, -1)
 			endif
 			try
 				let bid = term_start(command, opts)
@@ -1188,6 +1319,7 @@ function! s:terminal_init(opts)
 			let success = (job_status(jid) != 'fail')? 1 : 0
 		endif
 		let pid = (success)? (job_info(jid)['process']) : -1
+		let processid = pid
 	else
 		let opts = {}
 		let opts.on_exit = function('s:terminal_exit')
@@ -1210,34 +1342,55 @@ function! s:terminal_init(opts)
 		endif
 		let success = (jid > 0)? 1 : 0
 		let pid = (success)? jid : -1
+		let processid = (success)? jobpid(jid) : -1
 	endif
 	if success == 0
 		call s:ErrorMsg('Process creation failed')
 		return -1
 	endif
+	let info = {}
 	if pos != 'hide'
 		setlocal nonumber signcolumn=no norelativenumber
 		let b:asyncrun_cmd = a:opts.cmd
 		let b:asyncrun_name = get(a:opts, 'name', '')
+		let b:asyncrun_bid = bid
 		if get(a:opts, 'listed', 1) == 0
 			setlocal nobuflisted
 		endif
-		exec has('nvim')? 'startinsert' : ''
-		if has_key(a:opts, 'hidden')
-			exec 'setlocal bufhidden=' . (hidden? 'hide' : '')
+		let hidden = get(g:, 'asyncrun_term_hidden', '')
+		let hidden = get(a:opts, 'hidden', hidden)
+		if type(hidden) == type(0)
+			let t = (hidden)? 'hide' : 'wipe'
+		else
+			let t = (type(hidden) == type(''))? hidden : ''
+			if t =~ '^\d\+'
+				let t = (str2nr(t))? 'hide' : 'wipe'
+			endif
 		endif
+		if has_key(a:opts, 'hidden') || t != ''
+			exec 'setlocal bufhidden=' . t
+		endif
+		if exists('*win_getid')
+			let info.winid = win_getid()
+		endif
+		exec has('nvim')? 'startinsert' : ''
 	endif
-	let opts = {}
-	let opts.name = get(a:opts, 'name', '')
-	let opts.post = get(a:opts, 'post', '')
-	let opts.cmd = get(a:opts, 'cmd', '')
+	let info.name = get(a:opts, 'name', '')
+	let info.post = get(a:opts, 'post', '')
+	let info.cmd = get(a:opts, 'cmd', '')
 	if has_key(a:opts, 'exit')
-		let opts.exit = a:opts.exit
+		let info.exit = a:opts.exit
 	endif
-	let opts.pid = pid
-	let opts.jid = jid
-	let opts.bid = bid
-	let s:async_term[pid] = opts
+	let info.pid = pid
+	let info.jid = jid
+	let info.bid = bid
+	let info.cmd = a:opts.cmd
+	let info.processid = processid
+	let info.close = get(a:opts, 'close', 0)
+	let s:async_term[pid] = info
+	if bid >= 0
+		call setbufvar(bid, 'asyncrun_pid', pid)
+	endif
 	return pid
 endfunc
 
@@ -1250,11 +1403,32 @@ function! s:terminal_open(opts)
 	if a:opts.cwd != ''
 		silent! call s:chdir(a:opts.cwd)
 	endif
-	let hr = s:terminal_init(a:opts)
+	let pid = s:terminal_init(a:opts)
 	if a:opts.cwd != ''
 		silent! call s:chdir(previous)
 	endif
-	return hr
+	if pid >= 0
+		if get(a:opts, 'reuse', 0)
+			let bid = get(a:opts, '_terminal_wipe', -1)
+			if bid > 0
+				if bufexists(bid)
+					silent! exec 'bw '  . bid
+				endif
+			endif
+		endif
+		if has_key(s:async_term, pid)
+			let info = s:async_term[pid]
+			let rename = get(g:, 'asyncrun_term_rename', -1)
+			if rename >= 0
+				let name = s:term_gen_name(rename, a:opts, info.processid)
+				if name != ''
+					" echom 'name: ' . name
+					exec 'file! ' . name
+				endif
+			endif
+		endif
+	endif
+	return pid
 endfunc
 
 
@@ -1271,17 +1445,125 @@ function! s:terminal_exit(...)
 	if !has_key(s:async_term, pid)
 		return -1
 	endif
-	let opts = s:async_term[pid]
+	let info = s:async_term[pid]
 	unlet s:async_term[pid]
 	let g:asyncrun_code = code
-	let g:asyncrun_name = opts.name
-	if opts.post != ''
-		exec opts.post
+	let g:asyncrun_name = info.name
+	let bid = info.bid
+	if bid >= 0
+		let need_wipe = get(g:, 'asyncrun_term_wipe', 0)
+		if need_wipe
+			let bh = getbufvar(bid, '&bufhidden', '')
+			if empty(bh)
+				call setbufvar(bid, '&bufhidden', 'wipe')
+			endif
+		endif
+		if info.close != 0
+			if getbufvar(bid, '&bt', '') == 'terminal'
+				silent! exec "bd! " . bid
+			endif
+		endif
 	endif
-	if has_key(opts, 'exit')
-		let F = function(opts.exit)
-		call F(opts.name, code)
+	if info.post != ''
+		exec info.post
 	endif
+	if has_key(info, 'exit')
+		let l:F = function(info.exit)
+		call l:F(info.name, code)
+		unlet l:F
+	endif
+endfunc
+
+
+"----------------------------------------------------------------------
+" check terminal is still running
+"----------------------------------------------------------------------
+function! s:term_alive(bid)
+	if getbufvar(a:bid, '&buftype') != 'terminal'
+		return 0
+	endif
+	if has('nvim') == 0
+		return (term_getstatus(a:bid) == 'finished')? 0 : 1
+	else
+		let ch = getbufvar(a:bid, '&channel')
+		let status = (jobwait([ch], 0)[0] == -1)? 1 : 0
+		return (status == 0)? 0 : 1
+	endif
+	return 0
+endfunc
+
+
+"----------------------------------------------------------------------
+" check terminal is reusable
+"----------------------------------------------------------------------
+function! s:term_reusable(bid)
+	if getbufvar(a:bid, '&buftype') != 'terminal'
+		return 0
+	endif
+	if getbufvar(a:bid, 'asyncrun_bid', -1) < 0
+		return 0
+	endif
+	if has('nvim') == 0
+		return (term_getstatus(a:bid) == 'finished')? 1 : 0
+	else
+		let ch = getbufvar(a:bid, '&channel')
+		let status = (jobwait([ch], 0)[0] == -1)? 1 : 0
+		return (status == 0)? 1 : 0
+	endif
+	return 0
+endfunc
+
+
+"----------------------------------------------------------------------
+" get a proper name
+"----------------------------------------------------------------------
+function! s:term_gen_name(mode, opts, pid)
+	let mode = a:mode
+	let command = a:opts.cmd
+	let pid = a:pid
+	let wipe = get(a:opts, '_terminal_wipe', -1)
+	if mode == 0
+		let mode = has('nvim')? 2 : 1
+	endif
+	if mode == 1
+		let name = '!' . command
+	elseif mode == 2
+		let name = printf('term://~//%d:%s', pid, command)
+	elseif mode == 3
+		let name = printf(':AsyncRun %s', command)
+	else
+		let name = printf('!(%d) %s', pid, command)
+	endif
+	if !bufexists(name)
+		return name
+	elseif get(a:opts, 'reuse', 0)
+		let bid = bufnr(name)
+		if bid == bufnr('%')
+			if !s:term_alive(bid)
+				if wipe == bid
+					return name
+				endif
+			endif
+		endif
+	endif
+	let index = 1
+	while 1
+		let test = printf('%s (%d)', name, index)
+		if !bufexists(test)
+			return test
+		elseif get(a:opts, 'reuse', 0)
+			let bid = bufnr(test)
+			if bid == bufnr('%')
+				if !s:term_alive(bid)
+					if wipe == bid
+						return test
+					endif
+				endif
+			endif
+		endif
+		let index += 1
+	endwhile
+	return ''
 endfunc
 
 
@@ -1295,23 +1577,13 @@ function! s:start_in_terminal(opts)
 		return -1
 	endif
 	let avail = -1
+	let a:opts._terminal_wipe = -1
 	for ii in range(winnr('$'))
 		let wid = ii + 1
-		if getwinvar(wid, '&bt') == 'terminal'
-			if has('nvim') == 0
-				let bid = winbufnr(wid)
-				if term_getstatus(bid) == 'finished'
-					let avail = wid
-					break
-				endif
-			else
-				let ch = getwinvar(wid, '&channel')
-				let status = (jobwait([ch], 0)[0] == -1)? 1 : 0
-				if status == 0
-					let avail = wid
-					break
-				endif
-			endif
+		let bid = winbufnr(wid)
+		if s:term_reusable(bid)
+			let avail = wid
+			break
 		endif
 	endfor
 	let focus = get(a:opts, 'focus', 1)
@@ -1326,20 +1598,9 @@ function! s:start_in_terminal(opts)
 			for i in range(tabpagenr('$'))
 				if tabpagewinnr(i + 1, '$') == 1
 					let bid = tabpagebuflist(i + 1)[0]
-					if getbufvar(bid, '&bt', '') == 'terminal'
-						if has('nvim') == 0
-							if term_getstatus(bid) == 'finished'
-								let avail = i + 1
-								break
-							endif
-						else
-							let ch = getbufvar(bid, '&channel')
-							let status = (jobwait([ch], 0)[0] == -1)? 1 : 0
-							if status == 0
-								let avail = i + 1
-								break
-							endif
-						endif
+					if s:term_reusable(bid)
+						let avail = i + 1
+						break
 					endif
 				endif
 			endfor
@@ -1350,13 +1611,21 @@ function! s:start_in_terminal(opts)
 				endif
 			else
 				exec 'tabn ' . avail
+				let a:opts._terminal_wipe = bufnr('%')
 			endif
 		endif
 		let hr = s:terminal_open(a:opts)
 		if hr >= 0
 			if focus == 0
-				exec has('nvim')? 'stopinsert' : ''
-				exec 'tabprevious'
+				if has('nvim')
+					stopinsert
+					exec 'normal! ggG'
+				endif
+				let last_tid = tabpagenr('#')
+				if last_tid > 0
+					" Go to the last accessed tab page.
+					exec 'tabnext' last_tid
+				endif
 			endif
 		endif
 		return 0
@@ -1371,7 +1640,7 @@ function! s:start_in_terminal(opts)
 	keepalt noautocmd windo call s:save_restore_view(0)
 	keepalt noautocmd call win_gotoid(uid)
 	let origin = win_getid()
-	if avail < 0 || get(a:opts, 'reuse', 1) == 0
+	if avail < 0 || get(a:opts, 'reuse', 0) == 0
 		let rows = get(a:opts, 'rows', '')
 		let cols = get(a:opts, 'cols', '')
 		if pos == 'top'
@@ -1388,6 +1657,7 @@ function! s:start_in_terminal(opts)
 	endif
 	if avail > 0 
 		exec "normal! ". avail . "\<c-w>\<c-w>"
+		let a:opts._terminal_wipe = bufnr('%')
 	endif
 	let uid = win_getid()
 	keepalt noautocmd call win_gotoid(origin)
@@ -1396,10 +1666,23 @@ function! s:start_in_terminal(opts)
 	noautocmd call win_gotoid(uid)
 	let hr = s:terminal_open(a:opts)
 	if focus == 0 && hr >= 0
-		exec has('nvim')? 'stopinsert' : ''
+		if has('nvim')
+			stopinsert
+			exec 'normal! ggG'
+		endif
 		call win_gotoid(origin)
 	endif
 	return 0
+endfunc
+
+
+"----------------------------------------------------------------------
+" invoke event
+"----------------------------------------------------------------------
+function! s:DispatchEvent(name, ...)
+	if has_key(g:asyncrun_event, a:name)
+		call call(g:asyncrun_event[a:name], a:000)
+	endif
 endfunc
 
 
@@ -1435,6 +1718,9 @@ function! s:run(opts)
 		let l:opts.raw = 1
 	elseif type(l:mode) == 0 && l:mode == 6
 		let pos = get(l:opts, 'pos', '')
+		if pos != ''
+			call s:DispatchEvent('runner', pos)
+		endif
 		if has_key(g:asyncrun_runner, pos)
 			let l:runner = pos
 		elseif pos == 'bang' || pos == 'vim'
@@ -1453,6 +1739,7 @@ function! s:run(opts)
 	let l:program = ""
 
 	let s:async_efm = a:opts.errorformat
+	let l:opts.code = l:mode
 
 	if l:opts.program == 'make'
 		let l:program = &makeprg
@@ -1479,21 +1766,30 @@ function! s:run(opts)
 			call s:ErrorMsg("only available for Windows")
 			return ''
 		endif
+	elseif has_key(g:asyncrun_translator, l:opts.program)
+		let name = l:opts.program
+		let l:program = g:asyncrun_translator[name]
 	elseif l:opts.program != ''
 		let name = l:opts.program
+		if name != ''
+			call s:DispatchEvent('program', name)
+		endif
 		let test = ['cygwin', 'msys', 'mingw32', 'mingw64']
-		if index(test, name) >= 0
+		let test += ['clang64', 'clang32']
+		if has_key(g:asyncrun_program, name) != 0
+			let l:F = g:asyncrun_program[name]
+			if type(l:F) == type('')
+				let t = l:F
+				unlet l:F
+				let l:F = function(t)
+			endif
+			unsilent let l:command = l:F(l:opts)
+			unlet l:F
+		elseif index(test, name) >= 0
 			unsilent let l:command = s:program_msys(l:opts)
 		else
-			if has_key(g:asyncrun_program, name) == 0
-				call s:ErrorMsg(name . " not found in g:asyncrun_program")
-				return ''
-			endif
-			let F = g:asyncrun_program[name]
-			if type(F) == type('')
-				let F = function(F)
-			endif
-			unsilent let l:command = F(l:opts)
+			call s:ErrorMsg(name . " not found in g:asyncrun_program")
+			return ''
 		endif
 		if l:command == ''
 			return ''
@@ -1502,17 +1798,7 @@ function! s:run(opts)
 	endif
 
 	if l:program != ''
-		if l:program =~# '\$\*'
-			let l:command = s:StringReplace(l:program, '\$\*', l:command)
-		elseif l:command != ''
-			let l:command = l:program . ' ' . l:command
-		else
-			let l:command = l:program
-		endif
-		let l:command = s:StringStrip(l:command)
-		let s:async_program_cmd = ''
-		silent exec 'AsyncRun -program=parse @ '. l:command
-		let l:command = s:async_program_cmd
+		let l:command = asyncrun#translate(l:program, l:command)
 	endif
 
 	if l:command =~ '^\s*$'
@@ -1550,14 +1836,17 @@ function! s:run(opts)
 		exec strpart(t, 1)
 		return ''
 	elseif l:runner != ''
-		let F = g:asyncrun_runner[l:runner]
-		if type(F) == type('')
-			let F = function(F)
+		let l:F = g:asyncrun_runner[l:runner]
+		if type(l:F) == type('')
+			let l:t = l:F
+			unlet l:F
+			let l:F = function(l:t)
 		endif
 		let obj = deepcopy(l:opts)
 		let obj.cmd = command
 		let obj.src = a:opts.cmd
-		call F(obj)
+		call l:F(obj)
+		unlet l:F
 		return ''
 	endif
 
@@ -1584,6 +1873,9 @@ function! s:run(opts)
 		let s:async_info.range_buf = opts.range_buf
 		let s:async_info.strip = opts.strip
 		let s:async_info.append = opts.append
+		let s:async_info.cwd = getcwd()
+		let s:async_info.once = get(opts, 'once', 0)
+		let s:async_info.encoding = get(opts, 'encoding', g:asyncrun_encs)
 		if s:AsyncRun_Job_Start(l:command) != 0
 			call s:AutoCmd('Error')
 		endif
@@ -1599,20 +1891,31 @@ function! s:run(opts)
 		endif
 		let l:efm1 = &g:efm
 		let l:efm2 = &l:efm
+		if exists('&makeencoding')
+			let l:encoding = &l:makeencoding
+			if g:asyncrun_encs != ''
+				let &l:makeencoding = g:asyncrun_encs
+			endif
+		endif
 		if g:asyncrun_local != 0
 			let &g:efm = s:async_efm
 			let &l:efm = s:async_efm
 		endif
 		if has('autocmd')
 			call s:AsyncRun_Job_AutoCmd(0, opts.auto)
-			exec "noautocmd make!"
+			silent exec "noautocmd make!"
 			call s:AsyncRun_Job_AutoCmd(1, opts.auto)
 		else
-			exec "make!"
+			silent exec "make!"
 		endif
 		if g:asyncrun_local != 0
 			if l:efm1 != &g:efm | let &g:efm = l:efm1 | endif
 			if l:efm2 != &l:efm | let &l:efm = l:efm2 | endif
+		endif
+		if exists('&makeencoding')
+			if g:asyncrun_encs != ''
+				let &l:makeencoding = l:encoding
+			endif
 		endif
 		let &l:makeprg = l:makesave
 		if s:asyncrun_windows == 0
@@ -1731,6 +2034,10 @@ function! s:run(opts)
 		endif
 	elseif l:mode == 6
 		let opts.cmd = l:command
+		if has_key(opts, 'reuse') == 0
+			let pos = get(opts, 'pos', '')
+			let opts.reuse = (pos ==? 'tab')? 0 : 1
+		endif
 		call s:start_in_terminal(opts)
 	endif
 
@@ -1776,6 +2083,10 @@ function! asyncrun#run(bang, opts, args, ...)
 		let l:macros['VIM_FILEEXT'] = ''
 	endif
 
+	" call init scripts
+	call s:DispatchEvent('init')
+	call s:AutoCmd('Init')
+
 	" extract options
 	let [l:command, l:opts] = s:ExtractOpt(s:StringStrip(a:args))
 
@@ -1792,9 +2103,13 @@ function! asyncrun#run(bang, opts, args, ...)
 	endif
 
 	" parse makeprg/grepprg and return
-	if l:opts.program == 'parse'
+	if l:opts.program == '<parse>'
 		let s:async_program_cmd = l:command
 		return s:async_program_cmd
+	elseif l:opts.program == '<display>'
+		let l:opts.cmd = l:command
+		echo l:opts
+		return ''
 	endif
 
 	" update marcros
@@ -1864,6 +2179,11 @@ function! asyncrun#run(bang, opts, args, ...)
 	let l:opts.errorformat = get(l:opts, 'errorformat', &errorformat)
 	let s:async_scroll = (a:bang == '!')? 0 : 1
 
+	" check scroll
+	if has_key(l:opts, 'scroll')
+		let s:async_scroll = (l:opts.scroll == '0')? 0 : 1
+	endif
+
 	" check if need to save
 	let l:save = get(l:opts, 'save', '')
 
@@ -1915,7 +2235,24 @@ endfunc
 " asyncrun - version
 "----------------------------------------------------------------------
 function! asyncrun#version()
-	return '2.8.6'
+	return '2.11.13'
+endfunc
+
+
+"----------------------------------------------------------------------
+" asyncrun - reset
+"----------------------------------------------------------------------
+function! asyncrun#reset()
+	call asyncrun#stop('!')
+	let s:async_state = 0
+	if exists('s:async_timer')
+		call timer_stop(s:async_timer)
+		unlet s:async_timer
+	endif
+	if exists('s:async_job')
+		unlet s:async_job
+	endif
+	let s:async_state = 0
 endfunc
 
 
@@ -1923,9 +2260,11 @@ endfunc
 " Commands
 "----------------------------------------------------------------------
 command! -bang -nargs=+ -range=0 -complete=file AsyncRun
-			\ call asyncrun#run('<bang>', '', <q-args>, <count>, <line1>, <line2>)
+		\ call asyncrun#run('<bang>', '', <q-args>, <count>, <line1>, <line2>)
 
 command! -bar -bang -nargs=0 AsyncStop call asyncrun#stop('<bang>')
+
+command! -nargs=0 AsyncReset call asyncrun#reset()
 
 
 "----------------------------------------------------------------------
@@ -1939,6 +2278,7 @@ function! s:program_msys(opts)
 		call s:ErrorMsg('program ' . program . ' is only for windows')
 		return ''
 	endif
+	let check = ['msys', 'mingw32', 'mingw64', 'clang32', 'clang64']
 	let lines = ["@echo off\r"]
 	let lines += ["set CHERE_INVOKING=enabled_from_arguments\r"]
 	if program == 'cygwin'
@@ -1958,7 +2298,7 @@ function! s:program_msys(opts)
 		endif
 		let mount = '/cygdrive'
 		let prefix = 'CYGWIN_'
-	elseif program == 'msys' || program == 'mingw32' || program == 'mingw64'
+	elseif index(check, program) >= 0
 		let home = get(g:, 'asyncrun_msys', '')
 		if home == ''
 			call s:ErrorMsg('g:asyncrun_msys needs to set to msys root')
